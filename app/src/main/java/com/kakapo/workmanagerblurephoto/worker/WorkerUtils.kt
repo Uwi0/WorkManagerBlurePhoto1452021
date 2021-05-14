@@ -4,12 +4,22 @@ package com.kakapo.workmanagerblurephoto.worker
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Build
+import android.renderscript.*
+import androidx.annotation.WorkerThread
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.kakapo.workmanagerblurephoto.Constants
 import com.kakapo.workmanagerblurephoto.R
 import timber.log.Timber
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.FileOutputStream
+import java.io.IOException
+import java.util.*
+import kotlin.jvm.Throws
 
 fun makeStatusNotification(message: String, context: Context){
 
@@ -44,6 +54,61 @@ fun sleep(){
     try{
         Thread.sleep(Constants.DELAY_TIME_MILLIS, 0)
     }catch (e: InterruptedException){
-        Timber.e(e.message)
+        Timber.e(e)
     }
+}
+
+@WorkerThread
+fun blurBitmap(bitmap: Bitmap, applicationContext: Context): Bitmap{
+    lateinit var rsContext: RenderScript
+    try{
+        //create output bitmap
+        val output = Bitmap.createBitmap(
+            bitmap.width, bitmap.height, bitmap.config
+        )
+
+        //Blur the Image
+        rsContext = RenderScript.create(applicationContext, RenderScript.ContextType.DEBUG)
+        val inAlloc = Allocation.createFromBitmap(rsContext, bitmap)
+        val outAlloc = Allocation.createTyped(rsContext, inAlloc.type)
+        val theIntrinsic = ScriptIntrinsicBlur.create(rsContext, Element.U8_4(rsContext))
+        theIntrinsic.apply {
+            setRadius(10f)
+            theIntrinsic.setInput(inAlloc)
+            theIntrinsic.forEach(outAlloc)
+        }
+        outAlloc.copyTo(output)
+
+        return output
+    }finally {
+        rsContext.finish()
+    }
+}
+
+
+@Throws(FileNotFoundException::class)
+fun writeBitmapToFile(applicationContext: Context, bitmap: Bitmap): Uri{
+    val name = String.format("blur-filter-output-%s.png", UUID.randomUUID().toString())
+    val outputDir = File(applicationContext.filesDir, Constants.OUTPUT_PATH)
+
+    if(!outputDir.exists()){
+        outputDir.mkdir()
+    }
+
+    val outputFile = File(outputDir, name)
+    var out: FileOutputStream? = null
+    try{
+        out = FileOutputStream(outputFile)
+        bitmap.compress(Bitmap.CompressFormat.PNG, 0 /* */, out)
+    }finally {
+        out?.let {
+            try {
+                it.close()
+            }catch (e: IOException){
+
+            }
+        }
+    }
+
+    return Uri.fromFile(outputFile)
 }
